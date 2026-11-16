@@ -152,4 +152,4 @@ Herramientas de Datos I — 2026
 
 ## Uso académico
 
-Proyecto desarrollado con fines académicos. Los registros de ventas corresponden a información interna del establecimiento y deben utilizarse únicamente con la
+Proyecto desarrollado con fines académicos. Los registros de ventas corresponden a información interna del establecimiento y deben utilizarse únicamente con la autorización correspondiente.
