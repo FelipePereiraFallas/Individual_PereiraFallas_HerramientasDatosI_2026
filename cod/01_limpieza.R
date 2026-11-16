@@ -6,7 +6,7 @@ library(here)
 
 
 #Definimos rutas
-ruta_entrada <- here("data", "Ventas_Guapiles.csv")
+ruta_entrada <- here("data", "Venta_Guapiles.csv")
 
 ruta_salida <- here("data", "procesados")
 
@@ -79,14 +79,16 @@ ventas_base <- ventas_originales |>
 
 ventas_base <- ventas_base |>
   mutate(
-    fecha = readr::parse_date(
+    fecha_texto = stringr::str_remove(
       Fecha,
-      format = "%A, %B %d, %Y",
-      locale = readr::locale(
-        date_names = "en"
-      )
+      "^[A-Za-z]+,\\s*"
+    ),
+    fecha = lubridate::mdy(
+      fecha_texto,
+      locale = "C"
     )
-  )
+  ) |>
+  select(-fecha_texto)
 
 
 #convertimos la columna de ventas en datos numéricos
