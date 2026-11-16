@@ -45,8 +45,6 @@ Individual_PereiraFallas_HerramientasDatosI_2026/
 │   ├── auditoria/
 │   └── figuras/
 │
-├── config/
-│
 ├── Individual_PereiraFallas_HerramientasDatosI_2026.qmd
 ├── Individual_PereiraFallas_HerramientasDatosI_2026.pdf
 ├── Individual_PereiraFallas_HerramientasDatosI_2026.Rproj
