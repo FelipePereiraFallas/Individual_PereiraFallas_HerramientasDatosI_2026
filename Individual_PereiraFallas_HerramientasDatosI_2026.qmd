@@ -1,0 +1,586 @@
+
+---
+title: ""
+lang: es
+format:
+  pdf:
+    pdf-engine: lualatex
+    documentclass: article
+    fontsize: 12pt
+    geometry: [top=2.0cm, bottom=2.0cm, left=2.3cm, right=2.3cm]
+    fig-pos: H
+    number-sections: false
+    colorlinks: false
+    include-in-header:
+      text: |
+        \usepackage{float}
+        \usepackage{setspace}
+        \setstretch{1.0}
+        \usepackage{titlesec}
+        \titlespacing*{\section}{0pt}{0.8ex}{0.4ex}
+        \titlespacing*{\subsection}{0pt}{0.5ex}{0.25ex}
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(knitr)
+library(scales)
+
+leer <- function(nombre) {
+  readr::read_csv(
+    file.path("data", "procesados", nombre),
+    show_col_types = FALSE
+  )
+}
+
+ventas <- leer("ventas_modelo.csv") |>
+  mutate(fecha = as.Date(fecha))
+
+dias <- leer("resumen_dias.csv")
+pagos <- leer("resumen_pagos.csv")
+modelos <- leer("resultados_modelos.csv")
+
+futuro <- leer("predicciones_futuras.csv") |>
+  mutate(fecha = as.Date(fecha))
+
+resumen <- leer("resumen_predicciones.csv")
+coef <- leer("coeficientes_modelo_3.csv")
+
+comparacion <- leer("comparacion_predicciones.csv") |>
+  mutate(fecha = as.Date(fecha))
+
+fmt_crc <- function(x) {
+  paste0(
+    "₡",
+    format(
+      round(x),
+      big.mark = ".",
+      decimal.mark = ",",
+      scientific = FALSE,
+      trim = TRUE
+    )
+  )
+}
+
+coeficiente <- function(termino) {
+  coef$estimate[match(termino, coef$term)]
+}
+
+pvalor <- function(termino) {
+  coef$p.value[match(termino, coef$term)]
+}
+
+mae1 <- modelos$MAE[modelos$modelo == "modelo_1"]
+mae3 <- modelos$MAE[modelos$modelo == "modelo_3"]
+
+mejora <- 100 * (mae1 - mae3) / mae1
+
+pct <- function(x) {
+  paste0(
+    format(round(x, 1), decimal.mark = ","),
+    " %"
+  )
+}
+```
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+
+{\Large Universidad de Costa Rica\par}
+
+\vspace{1cm}
+
+{\large Herramientas de Datos I\par}
+
+\vspace{2cm}
+
+{\LARGE\bfseries Predicción de ventas diarias de Carnes Tío Juan\par}
+
+\vspace{0.8cm}
+
+{\large Análisis de patrones semanales, fechas de pago y pronósticos\par}
+
+\vfill
+
+{\large Proyecto individual\par}
+
+\vspace{0.5cm}
+
+{\large Felipe Pereira Fallas\par}
+
+\vspace{0.5cm}
+
+{\large Noviembre de 2026\par}
+
+\end{titlepage}
+
+# Introducción
+
+La variación diaria de las ventas representa un reto para los comercios que trabajan con productos perecederos. En una carnicería, anticipar la demanda puede facilitar la planificación de compras, la disponibilidad de productos y la organización del personal. Para Carnes Tío Juan, ubicada en Guápiles, resulta especialmente relevante examinar las diferencias entre los días de la semana y la posible influencia de las fechas habituales de pago.
+
+El estudio utiliza registros internos de ventas diarias en colones costarricenses (CRC). Se comparan modelos predictivos de distinta complejidad para determinar si incorporar información del calendario permite mejorar la precisión frente a una referencia histórica sencilla. Se trata de un análisis observacional: los coeficientes muestran asociaciones y no demuestran causalidad.
+
+Desarrollar y evaluar un modelo estadístico de predicción de ventas diarias de Carnes Tío Juan, utilizando registros históricos y variables de calendario relacionadas con el día de la semana, los períodos de pago y la evolución temporal, para apoyar la planificación operativa del establecimiento.
+
+# Metodología
+
+Se trabajó con `r nrow(ventas)` observaciones válidas comprendidas entre `r format(min(ventas$fecha), "%d/%m/%Y")` y `r format(max(ventas$fecha), "%d/%m/%Y")`. La depuración eliminó filas vacías, consolidó duplicados idénticos y apartó fechas con registros contradictorios sin valor verificable. Se excluyeron dos ventas identificadas como errores de digitación por el establecimiento (08/05/2025 y 16/10/2026). Los demás valores inusuales se conservaron. Las fechas ausentes se consideraron cierres del local, no ventas iguales a cero.
+
+Se definió el día de la semana como variable categórica y se incorporaron el mes y una tendencia temporal. Para los pagos se utilizaron cinco categorías: días ordinarios; días 12–14 (antes de quincena); días 15–17 (quincena); tres días anteriores al último día del mes; y último día del mes más los dos posteriores. Estas ventanas son aproximaciones operativas, no fechas de pago individualmente verificadas.
+
+Se compararon tres enfoques: M1, promedio histórico; M2, regresión por día de la semana; y M3, regresión por día de la semana, período de pago, mes y tendencia. La división cronológica destinó 559 registros al entrenamiento y 140 a prueba. Se evaluaron el error absoluto medio (MAE) y la raíz del error cuadrático medio (RMSE), ambos expresados en CRC. El modelo seleccionado se reestimó con toda la muestra para proyectar 30 días calendario, excluyendo los domingos conforme al horario actual del establecimiento.
+
+
+# Resultados
+
+## 1. Comportamiento de las ventas según el día de la semana
+
+El análisis descriptivo evidencia que las ventas de Carnes Tío Juan presentan diferencias importantes según el día de la semana. El sábado registra el promedio más elevado, con `r fmt_crc(dias$venta_promedio[dias$dia_semana == "Sabado"])`, seguido por el viernes, con `r fmt_crc(dias$venta_promedio[dias$dia_semana == "Viernes"])`. Por el contrario, el domingo presenta el menor promedio histórico, equivalente a `r fmt_crc(dias$venta_promedio[dias$dia_semana == "Domingo"])`.
+
+Esta diferencia permite identificar un patrón de concentración de las ventas hacia el final de la semana. Una posible explicación comercial es que algunos consumidores realizan compras de alimentos durante el viernes y el sábado para abastecer sus hogares durante los días siguientes. Sin embargo, esta interpretación constituye una hipótesis sobre los hábitos de compra y no una conclusión causal demostrada por los registros disponibles.
+
+```{r}
+#| label: fig-semana
+#| fig-cap: "Distribución de ventas diarias según el día de la semana. Fuente: Carnes Tío Juan; elaboración propia."
+#| fig-width: 7
+#| fig-height: 2.5
+#| fig-align: center
+
+ventas |>
+  mutate(
+    dia_semana = factor(
+      dia_semana,
+      levels = c(
+        "Lunes", "Martes", "Miercoles",
+        "Jueves", "Viernes", "Sabado", "Domingo"
+      )
+    )
+  ) |>
+  ggplot(aes(dia_semana, venta)) +
+  geom_boxplot(
+    fill = "#6B93B8",
+    outlier.alpha = 0.35
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Día de la semana",
+    y = "Ventas (CRC)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(
+      angle = 20,
+      hjust = 1
+    )
+  )
+```
+
+La Figura @fig-semana permite observar que las diferencias no se limitan a los promedios. La amplitud de las cajas y la presencia de valores extremos indican que algunos días presentan una mayor variabilidad en sus ventas. Esto resulta especialmente relevante para la administración de inventarios, ya que un promedio elevado no significa que todas las jornadas alcancen ese nivel.
+
+Asimismo, el contraste entre sábado y domingo demuestra que no resulta apropiado agrupar ambos días en una única categoría de fin de semana. Sus comportamientos históricos son distintos y deben representarse de manera independiente. Aunque los domingos forman parte de los registros utilizados para estimar el modelo, se excluyen de las predicciones futuras debido al horario actual del establecimiento.
+
+Desde una perspectiva operativa, los resultados sugieren prestar especial atención al abastecimiento y la disponibilidad de personal durante viernes y sábado. No obstante, las decisiones concretas de compra deben considerar también la variabilidad observada, para evitar tanto faltantes de producto como acumulaciones innecesarias de inventario perecedero.
+
+## 2. Influencia de los períodos de pago
+
+Uno de los objetivos del análisis fue determinar si las ventas presentan diferencias alrededor de las fechas habituales de pago. Para ello, se compararon cinco períodos: días ordinarios, antes de quincena, quincena, antes de fin de mes y fin de mes.
+
+```{r}
+#| label: tbl-pagos
+#| tbl-cap: "Ventas según proximidad a los períodos de pago. Fuente: Carnes Tío Juan; elaboración propia."
+
+pagos |>
+  transmute(
+    Período = periodo_pago,
+    `Días` = observaciones,
+    `Media (CRC)` = fmt_crc(venta_promedio),
+    `Mediana (CRC)` = fmt_crc(venta_mediana)
+  ) |>
+  knitr::kable(
+    align = c("l", "r", "r", "r"),
+    booktabs = TRUE
+  )
+```
+
+Como muestra la Tabla @tbl-pagos, las ventas ordinarias presentan un promedio de `r fmt_crc(pagos$venta_promedio[pagos$periodo_pago == "Ordinario"])`, mientras que durante la quincena el promedio aumenta a `r fmt_crc(pagos$venta_promedio[pagos$periodo_pago == "Quincena"])`. La diferencia es más pronunciada al final del mes, cuando se registra un promedio de `r fmt_crc(pagos$venta_promedio[pagos$periodo_pago == "Fin de mes"])`.
+
+En términos porcentuales, el promedio de fin de mes supera al de los días ordinarios en aproximadamente `r pct(100*(pagos$venta_promedio[pagos$periodo_pago == "Fin de mes"]/pagos$venta_promedio[pagos$periodo_pago == "Ordinario"]-1))`. Este resultado es compatible con la hipótesis de que una mayor disponibilidad de ingresos puede coincidir con un incremento en las compras de productos cárnicos.
+
+Sin embargo, es importante distinguir entre una diferencia descriptiva y un efecto estadístico ajustado. Los promedios anteriores no consideran si los días de fin de mes coinciden con viernes o sábado, que ya presentan ventas relativamente altas. Por esa razón, la comparación mediante regresión múltiple resulta necesaria para separar parcialmente las asociaciones del día semanal y del período de pago.
+
+También se examinó la posibilidad de que las ventas disminuyeran antes de los pagos. Los resultados descriptivos muestran que los promedios anteriores a quincena y fin de mes son cercanos al promedio ordinario. Por tanto, no se identifica una reducción suficientemente clara como para afirmar que existe un patrón general de contracción del consumo durante esos días.
+
+Esta distinción es importante para el negocio: mientras que los días cercanos al fin de mes pueden justificar una mayor atención comercial, no existe evidencia suficiente para recomendar una reducción sistemática de inventario antes de las fechas de pago.
+
+## 3. Evaluación y comparación de los modelos predictivos
+
+La capacidad predictiva se evaluó utilizando un conjunto de prueba formado por las últimas 140 observaciones disponibles. Este procedimiento permite examinar el desempeño de los modelos sobre datos posteriores a los utilizados durante su entrenamiento y reduce el riesgo de evaluar predicciones sobre información ya conocida.
+
+```{r}
+#| label: tbl-modelos
+#| tbl-cap: "Errores de predicción de los modelos evaluados. Fuente: elaboración propia."
+
+modelos |>
+  mutate(
+    modelo = recode(
+      modelo,
+      modelo_1 = "M1: promedio",
+      modelo_2 = "M2: día semanal",
+      modelo_3 = "M3: calendario"
+    )
+  ) |>
+  transmute(
+    Modelo = modelo,
+    `MAE (CRC)` = fmt_crc(MAE),
+    `RMSE (CRC)` = fmt_crc(RMSE)
+  ) |>
+  knitr::kable(
+    align = c("l", "r", "r"),
+    booktabs = TRUE
+  )
+```
+
+Los resultados de la Tabla @tbl-modelos muestran que el modelo M3 obtuvo el mejor desempeño, con un MAE de `r fmt_crc(mae3)` y un RMSE de `r fmt_crc(modelos$RMSE[modelos$modelo == "modelo_3"])`. En comparación con M1, que utiliza únicamente el promedio histórico, la reducción del MAE fue de `r pct(mejora)`.
+
+Esta mejora indica que incorporar simultáneamente el día de la semana, el período de pago, el mes y la tendencia temporal aporta información útil para anticipar las ventas. No obstante, el MAE representa un promedio de desviaciones absolutas: no significa que todas las predicciones se encuentren a esa distancia de las ventas reales.
+
+Un resultado particularmente interesante es que M2, basado exclusivamente en el día de la semana, presentó un error mayor que M1. Esto evidencia que reconocer diferencias semanales no garantiza, por sí solo, una mejora en la precisión fuera de muestra. Las condiciones comerciales pueden cambiar con el tiempo y un modelo que utiliza únicamente promedios por día puede no adaptarse suficientemente a esas variaciones.
+
+```{r}
+#| label: fig-errores
+#| fig-cap: "Comparación de MAE y RMSE entre los modelos. Fuente: elaboración propia."
+#| fig-width: 7
+#| fig-height: 2.25
+#| fig-align: center
+
+modelos |>
+  mutate(
+    modelo = factor(
+      modelo,
+      levels = c(
+        "modelo_1",
+        "modelo_2",
+        "modelo_3"
+      ),
+      labels = c("M1", "M2", "M3")
+    )
+  ) |>
+  pivot_longer(
+    c(MAE, RMSE),
+    names_to = "Métrica",
+    values_to = "Error"
+  ) |>
+  ggplot(
+    aes(modelo, Error, fill = Métrica)
+  ) +
+  geom_col(
+    position = "dodge",
+    width = 0.65
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Modelo",
+    y = "Error (CRC)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "top"
+  )
+```
+
+La Figura @fig-errores confirma que M3 presenta los menores errores en ambas métricas. La coincidencia es relevante porque MAE y RMSE penalizan las desviaciones de manera diferente: mientras el primero resume la magnitud promedio del error, el segundo otorga mayor peso a las predicciones con errores grandes.
+
+En consecuencia, la selección de M3 no depende exclusivamente de una métrica. Aun así, su desempeño corresponde a un período específico de evaluación, por lo que conviene revisar periódicamente su precisión con nuevas observaciones.
+
+## 4. Interpretación estadística del modelo seleccionado
+
+El modelo M3 permite estudiar las asociaciones entre las variables explicativas y las ventas, manteniendo constantes las demás características incluidas en la regresión.
+
+En relación con el lunes, el sábado presenta una diferencia estimada de `r fmt_crc(coeficiente("dia_semanaSabado"))`, mientras que el viernes registra una diferencia de `r fmt_crc(coeficiente("dia_semanaViernes"))`. Por su parte, el domingo presenta una diferencia de `r fmt_crc(coeficiente("dia_semanaDomingo"))`.
+
+Estas estimaciones refuerzan la importancia del patrón semanal identificado en el análisis descriptivo. La mayor actividad de los sábados permanece incluso después de considerar el mes, la tendencia y los períodos de pago. Esto sugiere que el día de la semana contiene información relevante para la predicción, aunque no constituye una explicación causal del comportamiento de los consumidores.
+
+Respecto a los pagos, el período de fin de mes presenta un coeficiente de `r fmt_crc(coeficiente("periodo_pagoFin de mes"))` frente a los días ordinarios, con un valor p de `r format.pval(pvalor("periodo_pagoFin de mes"), digits = 2)`. Esta asociación resulta estadísticamente significativa al nivel del 5 %.
+
+Por otro lado, el coeficiente de quincena es de `r fmt_crc(coeficiente("periodo_pagoQuincena"))`, con un valor p de `r format(round(pvalor("periodo_pagoQuincena"), 3), decimal.mark = ",")`. Aunque su signo es positivo, no alcanza el umbral convencional de significación estadística del 5 %.
+
+Los períodos anteriores a los pagos tampoco presentan asociaciones estadísticamente significativas al mismo nivel. Por tanto, los resultados no permiten sostener que las ventas disminuyan sistemáticamente antes de quincena o fin de mes.
+
+En términos generales, la regresión identifica dos características especialmente relevantes: las diferencias entre días de la semana y la asociación positiva del período de fin de mes. Sin embargo, la significación estadística debe distinguirse de la utilidad predictiva: un coeficiente significativo no garantiza por sí solo que el modelo pronostique correctamente cada jornada.
+
+## 5. Predicción de ventas futuras
+
+Una vez seleccionado M3, se ajustó nuevamente utilizando las 699 observaciones válidas disponibles. Posteriormente, se proyectaron `r nrow(futuro)` días de apertura prevista, comprendidos entre `r format(min(futuro$fecha), "%d/%m/%Y")` y `r format(max(futuro$fecha), "%d/%m/%Y")`.
+
+La suma de las ventas diarias pronosticadas asciende a `r fmt_crc(resumen$venta_total_predicha)`, con un promedio diario de `r fmt_crc(resumen$venta_promedio_predicha)`. El valor máximo proyectado es de `r fmt_crc(resumen$venta_maxima_predicha)`.
+
+```{r}
+#| label: fig-pronostico
+#| fig-cap: "Predicciones futuras e intervalos individuales del 95 %. Fuente: elaboración propia."
+#| fig-width: 7
+#| fig-height: 2.45
+#| fig-align: center
+
+futuro |>
+  ggplot(
+    aes(fecha, venta_predicha)
+  ) +
+  geom_ribbon(
+    aes(
+      ymin = limite_inferior,
+      ymax = limite_superior
+    ),
+    fill = "#8CB6DA",
+    alpha = 0.35
+  ) +
+  geom_line(
+    color = "#225E93",
+    linewidth = 0.8
+  ) +
+  geom_point(
+    color = "#225E93",
+    size = 1
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Fecha",
+    y = "Ventas previstas (CRC)"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+La Figura @fig-pronostico presenta variaciones entre las jornadas proyectadas, coherentes con las diferencias semanales y los períodos de pago incorporados en el modelo. Los días con mayores estimaciones requieren especial atención para la planificación del abastecimiento, aunque los valores puntuales deben interpretarse como referencias y no como ventas aseguradas.
+
+Los intervalos individuales del 95 % muestran que existe incertidumbre alrededor de cada predicción. Su amplitud refleja la posibilidad de que las ventas reales se alejen considerablemente de los valores estimados. Estos intervalos dependen de los supuestos estadísticos del modelo y no deben sumarse para construir un intervalo de confianza del total proyectado.
+
+Los resultados permiten establecer tres conclusiones principales. Primero, las ventas presentan un patrón semanal marcado, especialmente por el mayor nivel de los sábados. Segundo, el período de fin de mes muestra una asociación positiva con las ventas, mientras que no se encuentra evidencia estadística suficiente de una caída sistemática antes de los pagos. Tercero, el modelo que combina variables semanales, mensuales y temporales supera en precisión a las alternativas más sencillas.
+
+
+# Bibliografía
+
+Carnes Tío Juan. (2026). *Registro interno de ventas diarias, 2024–2026* [Base de datos no publicada].
+
+R Core Team. (2026). *R: A language and environment for statistical computing* [Software]. R Foundation for Statistical Computing. https://www.R-project.org/
+
+Wickham, H., et al. (2019). Welcome to the tidyverse. *Journal of Open Source Software, 4*(43), 1686. https://doi.org/10.21105/joss.01686
+
+\clearpage
+
+# Anexos gráficos
+
+Los siguientes gráficos complementan los resultados principales. Se incluyen fuera del límite de cinco páginas y se generan a partir de las bases procesadas. No se imprime código en los anexos.
+
+## Anexo A. Evolución histórica de las ventas
+
+```{r}
+#| label: fig-historico
+#| fig-cap: "Serie histórica de ventas diarias. Fuente: Carnes Tío Juan; elaboración propia."
+#| fig-width: 7
+#| fig-height: 3.2
+
+ventas |>
+  ggplot(aes(fecha, venta)) +
+  geom_line(
+    color = "#386D9A",
+    alpha = 0.7,
+    linewidth = 0.45
+  ) +
+  geom_smooth(
+    se = FALSE,
+    method = "loess",
+    span = 0.18,
+    color = "#A44B3F",
+    linewidth = 0.9
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Fecha",
+    y = "Ventas (CRC)"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+La serie permite apreciar la variabilidad diaria y la evolución suavizada de las ventas. La línea suavizada describe la muestra y no debe confundirse con un pronóstico.
+
+## Anexo B. Ventas promedio por mes
+
+```{r}
+#| label: fig-meses
+#| fig-cap: "Promedio diario de ventas por mes del año. Fuente: Carnes Tío Juan; elaboración propia."
+#| fig-width: 7
+#| fig-height: 3.2
+
+ventas |>
+  group_by(mes) |>
+  summarise(
+    promedio = mean(venta),
+    .groups = "drop"
+  ) |>
+  ggplot(
+    aes(
+      factor(mes, levels = 1:12),
+      promedio
+    )
+  ) +
+  geom_col(
+    fill = "#5E91B0"
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Mes",
+    y = "Venta diaria promedio (CRC)"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+Las diferencias mensuales deben interpretarse con cautela: los meses pueden tener distinto número de días registrados y no todos cuentan con igual cobertura anual.
+
+## Anexo C. Ventas por período de pago
+
+```{r}
+#| label: fig-pagos
+#| fig-cap: "Distribución de ventas según período de pago. Fuente: Carnes Tío Juan; elaboración propia."
+#| fig-width: 7
+#| fig-height: 3.4
+
+ventas |>
+  ggplot(
+    aes(periodo_pago, venta)
+  ) +
+  geom_boxplot(
+    fill = "#69A59A",
+    outlier.alpha = 0.4
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Período",
+    y = "Ventas (CRC)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(
+      angle = 25,
+      hjust = 1
+    )
+  )
+```
+
+La dispersión por grupo ayuda a valorar si las diferencias entre medias reflejan un desplazamiento general o algunos días de ventas particularmente altas.
+
+## Anexo D. Ventas reales frente a predicciones del modelo seleccionado
+
+```{r}
+#| label: fig-real-predicho
+#| fig-cap: "Ventas reales y pronosticadas por M3 en el período de prueba. Fuente: elaboración propia."
+#| fig-width: 7
+#| fig-height: 3.2
+
+comparacion |>
+  select(
+    fecha,
+    `Venta real` = venta_real,
+    `Predicción M3` = modelo_3
+  ) |>
+  pivot_longer(
+    -fecha,
+    names_to = "Serie",
+    values_to = "Venta"
+  ) |>
+  ggplot(
+    aes(fecha, Venta, color = Serie)
+  ) +
+  geom_line(
+    linewidth = 0.6
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Fecha",
+    y = "Ventas (CRC)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "top"
+  )
+```
+
+El gráfico permite identificar jornadas en las que el modelo sigue el patrón general y otras en las que subestima o sobreestima la venta real.
+
+## Anexo E. Distribución de errores del modelo seleccionado
+
+```{r}
+#| label: fig-residuos
+#| fig-cap: "Distribución de errores de predicción de M3 en prueba. Fuente: elaboración propia."
+#| fig-width: 7
+#| fig-height: 3.2
+
+comparacion |>
+  mutate(
+    error = venta_real - modelo_3
+  ) |>
+  ggplot(
+    aes(error)
+  ) +
+  geom_histogram(
+    bins = 22,
+    fill = "#6B93B8",
+    color = "white"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  scale_x_continuous(
+    labels = label_number(
+      prefix = "₡",
+      big.mark = "."
+    )
+  ) +
+  labs(
+    x = "Venta real menos predicción (CRC)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+Los errores positivos indican subestimación de ventas y los negativos, sobreestimación. La concentración y asimetría de esta distribución permiten apreciar limitaciones que no se observan únicamente con MAE y RMSE.
