@@ -289,13 +289,35 @@ readr::write_csv(
 # Se conservan solamente las variables necesarias
 # para el analisis posterior.
 
+fechas_errores <- as.Date(c(
+  "2025-05-08",
+  "2026-10-16"
+))
+
+errores_digitacion <- ventas_periodo |>
+  filter(fecha %in% fechas_errores)
+
+readr::write_csv(
+  errores_digitacion,
+  file.path(
+    ruta_auditoria,
+    "errores_digitacion_confirmados.csv"
+  )
+)
+
 ventas_limpias <- ventas_periodo |>
+  filter(!fecha %in% fechas_errores) |>
   transmute(
     fecha,
     venta,
     valor_atipico
   ) |>
   arrange(fecha)
+
+stopifnot(
+  nrow(errores_digitacion) == 2,
+  !any(ventas_limpias$fecha %in% fechas_errores)
+)
 
 
 #vemos que no hayan fechas duplicadas y que su formato sea el correcto
